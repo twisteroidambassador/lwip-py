@@ -1,4 +1,5 @@
 from .err import *
+from .netif import *
 from .pbuf import *
 
 
@@ -29,4 +30,4 @@ SOCK_STREAM = 1
 SOCK_DGRAM = 2
 SOCK_RAW = 3
 
-INADDR_ANY = 0
+INADDR_ANY = bytes(4)

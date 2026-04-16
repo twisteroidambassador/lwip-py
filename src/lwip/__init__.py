@@ -3,7 +3,8 @@ import os
 from tempfile import NamedTemporaryFile
 
 from .ffi import ffi
-from .defs import SOCK_STREAM, SOCK_DGRAM
+from .defs import SOCK_STREAM, SOCK_DGRAM, AF_INET, AF_INET6
+from .lwip_error import LwipError
 from .netif import Netif
 from .netif.driver import NetifDriver
 from .socket import Socket
@@ -72,7 +73,7 @@ class LwIP:
         self.lwip.set_ip4_route_fn_override(hook)
 
 
-def _load_lwip(so_path: str | None = None):
+def _load_lwip(so_path: str | None = None, private: bool = False):
     """
     Creates a new instance of the lwIP shared object library.
 
@@ -81,39 +82,43 @@ def _load_lwip(so_path: str | None = None):
                     use a path in the environment variable LIBLWIP_PATH.
                     If that variable is not set, it will try to use
                     "liblwip.so" as path.
+    :param private: If true, load a separate instance of the library
 
     :return: A new instance of the shared object.
     """
     if not so_path:
-        so_path = os.environ.get("LIBLWIP_PATH") or "liblwip.so"
+        so_path = os.environ.get("LIBLWIP_PATH") or "./liblwip.so"
 
-    # You may be wondering "why isn't this code just `dlopen(path)`?"
-    #
-    # Well, lwIP uses global variables for context and loading the library
-    # in the usual way would cause different instances to share those global
-    # variables.
-    #
-    # We want to avoid that to be able to simulate different devices in
-    # different threads of the same process.
-    #
-    # So we are left with, at least, two choices:
-    # - Using RTLD_PRIVATE (only Linux, not supported by most dlopen
-    #   wrappers, cffi is not an exception).
-    # - Tricking dlopen into thinking that it's actually loading a different
-    #   library each time.
-    # It turns out that tricking dlopen is actually quite easy. The only thing
-    # needed is for the file to be in a different path. So we are taking this
-    # approach:
-    #  - Create a named temporary file
-    #  - Copy the shared object to the temporary file
-    #  - dlopen the temporary file
-    #  - And once it's been dlopen'd it's already in memory so we can delete the temporary file
-    # It has some caveats, though:
-    #  - It requires writing a temporary file
-    #  - It loads the same binary in memory several times
-    # But since the library is rather small (about 1MB in size) this is no big deal.
-    with open(so_path, "rb") as lib, NamedTemporaryFile() as tmplib:
-        tmplib.write(lib.read())
-        tmplib.flush()
-        lwip = ffi.dlopen(tmplib.name)
-        return lwip
+    if private:
+        # You may be wondering "why isn't this code just `dlopen(path)`?"
+        #
+        # Well, lwIP uses global variables for context and loading the library
+        # in the usual way would cause different instances to share those global
+        # variables.
+        #
+        # We want to avoid that to be able to simulate different devices in
+        # different threads of the same process.
+        #
+        # So we are left with, at least, two choices:
+        # - Using RTLD_PRIVATE (only Linux, not supported by most dlopen
+        #   wrappers, cffi is not an exception).
+        # - Tricking dlopen into thinking that it's actually loading a different
+        #   library each time.
+        # It turns out that tricking dlopen is actually quite easy. The only thing
+        # needed is for the file to be in a different path. So we are taking this
+        # approach:
+        #  - Create a named temporary file
+        #  - Copy the shared object to the temporary file
+        #  - dlopen the temporary file
+        #  - And once it's been dlopen'd it's already in memory so we can delete the temporary file
+        # It has some caveats, though:
+        #  - It requires writing a temporary file
+        #  - It loads the same binary in memory several times
+        # But since the library is rather small (about 1MB in size) this is no big deal.
+        with open(so_path, "rb") as lib, NamedTemporaryFile() as tmplib:
+            tmplib.write(lib.read())
+            tmplib.flush()
+            lwip = ffi.dlopen(tmplib.name)
+            return lwip
+    
+    return ffi.dlopen(so_path)

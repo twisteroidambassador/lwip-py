@@ -62,4 +62,4 @@
 
 #include "compat.h"
 
-extern int errno;
+/* extern int errno; */

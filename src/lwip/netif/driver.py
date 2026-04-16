@@ -16,15 +16,21 @@ class NetifDriver:
         """
         raise NotImplementedError
 
-    def lwip_on_output(self, payload: bytes, dst_ip: int):
+    def lwip_on_output(self, payload: bytes, dst_ip: bytes):
         """
-        Called by lwIP when it needs to output a packet through this
+        Called by lwIP when it needs to output an IPv4 packet through this
         interface
 
         `payload` is the complete IP packet with headers that should
         be sent to `dst_ip`.
 
         :return: ERR_OK if success, ERR_* on error
+        """
+        raise NotImplementedError
+    
+    def lwip_on_outpu_ip6(self, payload: bytes, dst_ip: bytes, zone: int):
+        """
+        Called by lwIP when it needs to output an IPv6 packe through this interface.
         """
         raise NotImplementedError
 

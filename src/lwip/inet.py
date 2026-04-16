@@ -1,3 +1,5 @@
+import socket
+
 from .ffi import ffi
 
 
@@ -34,5 +36,19 @@ def ip4_addr(ip_as_str):
     :return: struct ip4_addr*
     """
     addr = ffi.new("struct ip4_addr*")
-    addr.addr = str2ip(ip_as_str)
+    ffi.memmove(addr, socket.inet_pton(socket.AF_INET, ip_as_str), 4)
+    return addr
+
+
+def ip6_addr(ip_as_str: str, zone: int = 0):
+    """
+    Creates a `struct ip6_addr*` and fills it with the IP given as a string
+
+    :param ip_as_str: IP address to fill the structure with. E.g.: '::1'
+    :param zone: The zone / scope_id parameter.
+    :return: struct ip6_addr*
+    """
+    addr = ffi.new('struct ip6_addr *')
+    ffi.memmove(ffi.addressof(addr.addr), socket.inet_pton(socket.AF_INET6, ip_as_str), 16)
+    addr.zone = zone
     return addr
