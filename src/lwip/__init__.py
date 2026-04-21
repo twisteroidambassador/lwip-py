@@ -2,9 +2,10 @@ import os
 
 from tempfile import NamedTemporaryFile
 
+from . import compat_asserts  # type: ignore
 from .ffi import ffi
 from .defs import SOCK_STREAM, SOCK_DGRAM, AF_INET, AF_INET6
-from .lwip_error import LwipError
+from .lwip_error import LwipError, check_ret_errno
 from .netif import Netif
 from .netif.driver import NetifDriver
 from .socket import Socket
@@ -37,7 +38,7 @@ class LwIP:
         self.allocs.append(new_netif)
         return new_netif
 
-    def socket(self, family, socket_type, flags=0):
+    def socket(self, family, socket_type, proto=0):
         """
         Creates a new socket, in a similar way to how Python's `socket.socket()` function works
 
@@ -45,8 +46,14 @@ class LwIP:
 
         :return: An lwIP Socket instance.
         """
-        s = self.lwip.lwip_socket(family, socket_type, flags)
-        return Socket(self.lwip, family, s)
+        s = check_ret_errno(
+            'socket',
+            self.lwip.lwip_socket,
+            family,
+            socket_type,
+            proto,
+        )
+        return Socket(self.lwip, family, socket_type, proto, s)
 
     def set_routing_function(self, routing_fn):
         """

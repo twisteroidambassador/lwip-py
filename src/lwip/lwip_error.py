@@ -1,5 +1,8 @@
 import contextlib
+import errno as errno_module
+import logging
 import os
+import warnings
 
 from .ffi import ffi
 from .defs import ErrorCode
@@ -46,10 +49,16 @@ def check_ret_errno(
 
     :returns: the original return value.
     """
+    if (errno := ffi.errno):
+        warnings.warn(f'errno {errno} not zero before function {function_name} invocation', RuntimeWarning, stacklevel=3)
     ffi.errno = 0
     ret = function(*args, **kwargs)
-    if (errno := ffi.errno):
-        raise OSError(errno, f'LwIP {function_name} returned {ret}, errno {errno}: {os.strerror(errno)}')
+    errno = ffi.errno
+    ffi.errno = 0
+    if errno:
+        if ret < 0:
+            raise OSError(errno, f'LwIP {function_name} returned {ret}, errno {errno}: {errno_module.errorcode.get(errno)} {os.strerror(errno)}')
+        warnings.warn(f'function {function_name} returned {ret} but set errno to {errno}', RuntimeWarning, stacklevel=3)
     if ret < 0:
         raise LwipError(f'{function_name} returnd {ret}')
     return ret

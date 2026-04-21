@@ -1,8 +1,145 @@
+import errno
 import socket
+from collections.abc import Sequence, Iterable
+from typing import Self, overload
 
-from .defs import AF_INET, AF_INET6, INADDR_ANY
+from . import compat_translate
+from . import defs
 from .ffi import ffi
 from .lwip_error import LwipError, check_ret_errno
+
+
+class SockAddr:
+    """
+    Represents a sockaddr struct.
+
+    Provide convenience methods for casting to various sockaddr_* pointers.
+    """
+    def __init__(self) -> None:
+        self._sa = ffi.new('struct sockaddr_storage *')
+    
+    @property
+    def len(self):
+        return self._sa.s2_len
+    
+    @len.setter
+    def len(self, new_len):
+        self._sa.s2_len = new_len
+    
+    @property
+    def family(self):
+        return self._sa.ss_family
+    
+    @family.setter
+    def family(self, new_family):
+        self._sa.ss_family = new_family
+    
+    @property
+    def sockaddr(self):
+        return ffi.cast('struct sockaddr *', self._sa)
+    
+    @property
+    def sockaddr_in(self):
+        return ffi.cast('struct sockaddr_in *', self._sa)
+    
+    @property
+    def sockaddr_in6(self):
+        return ffi.cast('struct sockaddr_in6 *', self._sa)
+    
+    @classmethod
+    def sizeof(cls) -> int:
+        return ffi.sizeof('struct sockaddr_storage')
+    
+    @classmethod
+    def create_empty_sockaddr(cls):
+        sa = cls()
+        sa.len = cls.sizeof()
+        return sa
+    
+    @classmethod
+    def create_empty_sockaddr_paddrlen(cls):
+        """
+        Create an empty sockaddr struct and a socklen_t*, suitable for receiving output from socket functions.
+
+        Returns (SockAddr instance, "socklen_t *" instance), with socklen_t prepopulated for the allocated size.
+        """
+        sa = cls.create_empty_sockaddr()
+        paddr_len = ffi.new("socklen_t*")
+        paddr_len[0] = sa.len
+        return sa, paddr_len
+    
+    @classmethod
+    def parse_address(cls, address: tuple, family: int = socket.AF_UNSPEC) -> Self:
+        """
+        Parse a Python address tuple into a SockAddr instance.
+
+        Both IPv4 (host, port) and IPv6 (host, port, flowinfo, scope_id) tuples are supported.
+        `host` must be an IP address literal, not a host name.
+
+        If `family` is specified, it must match the family of the address tuple.
+        """
+        if family == socket.AF_UNSPEC:
+            if len(address) == 2:
+                family = socket.AF_INET
+            elif len(address) == 4:
+                family = socket.AF_INET6
+            else:
+                raise ValueError('Invalid address tuple length')
+        
+        sa = cls()
+
+        if family == socket.AF_INET:
+            if len(address) != 2:
+                raise ValueError('Invalid address tuple length for AF_INET')
+            host, port = address
+            if not host:
+                host = bytes(4)  # INADDR_ANY
+            else:
+                host = socket.inet_pton(socket.AF_INET, host)
+            sa_in = sa.sockaddr_in
+            sa_in.sin_len = ffi.sizeof('struct sockaddr_in')
+            sa_in.sin_family = family
+            sa_in.sin_port = socket.htons(port)
+            ffi.memmove(ffi.buffer(ffi.addressof(sa_in, 'sin_addr')), host, 4)
+            return sa
+        elif family == socket.AF_INET6:
+            if len(address) != 4:
+                raise ValueError('Invalid address tuple length for AF_INET6')
+            host, port, flowinfo, scope_id = address
+            if not host:
+                host = bytes(16)
+            else:
+                host = socket.inet_pton(socket.AF_INET6, host)
+            sa_in6 = sa.sockaddr_in6
+            sa_in6.sin6_len = ffi.sizeof('struct sockaddr_in6')
+            sa_in6.sin6_family = family
+            sa_in6.sin6_port = socket.htons(port)
+            sa_in6.sin6_flowinfo = flowinfo
+            ffi.memmove(ffi.buffer(ffi.addressof(sa_in6, 'sin6_addr')), host, 16)
+            sa_in6.sin6_scope_id = scope_id
+            return sa
+        else:
+            raise ValueError('Invalid family')
+    
+    def unparse_address(self) -> tuple:
+        """
+        Return the contents of this SockAddr instance in Python address tuple form.
+        """
+        if self.family == socket.AF_INET:
+            sa_in = self.sockaddr_in
+            host = socket.inet_ntop(socket.AF_INET, ffi.buffer(ffi.addressof(sa_in, 'sin_addr'))[:])
+            port = socket.ntohs(sa_in.sin_port)
+            return host, port
+        elif self.family == socket.AF_INET6:
+            sa_in6 = self.sockaddr_in6
+            host = socket.inet_ntop(socket.AF_INET6, ffi.buffer(ffi.addressof(sa_in6, 'sin6_addr'))[:])
+            port = socket.ntohs(sa_in6.sin6_port)
+            flowinfo = sa_in6.sin6_flowinfo
+            scope_id = sa_in6.sin6_scope_id
+            return host, port, flowinfo, scope_id
+        else:
+            raise ValueError('Invalid family')
+
 
 
 class Socket:
@@ -13,25 +150,45 @@ class Socket:
     are documented in the offending method's docs.
     """
 
-    def __init__(self, lwip_instance, family, fd):
+    def __init__(self, lwip_instance, family, type_, proto, fd):
         """
         Private constructor -- use Lwip.socket instead.
         """
-        self.lwip = lwip_instance
-        self.family = family
+        self._lwip = lwip_instance
+        self._family = family
+        self._type = type_
+        self._proto = proto
         if fd < 0:
             # The calling code should use check_ret_errno around the code where fd is obtained
             raise ValueError('Invalid FD')
-        self.s = fd
+        self._s = fd
+    
+    @property
+    def family(self) -> int:
+        return self._family
+    
+    @property
+    def type(self) -> int:
+        return self._type
+    
+    @property
+    def proto(self) -> int:
+        return self._proto
+    
+    def lwip_fileno(self) -> int:
+        return self._s
+    
+    def fileno(self):
+        raise LwipError('fileno() not supported on LwIP sockets')
 
     def bind(self, address):
-        addr, addr_len = self._parse_address(address)
+        sa = SockAddr.parse_address(address)
         return check_ret_errno(
             'bind',
-            self.lwip.lwip_bind,
-            self.s,
-            ffi.cast('struct sockaddr *', addr),
-            addr_len,
+            self._lwip.lwip_bind,
+            self._s,
+            sa.sockaddr,
+            sa.len,
         )
 
     def listen(self, backlog=-1):
@@ -40,202 +197,604 @@ class Socket:
 
         return check_ret_errno(
             "listen",
-            self.lwip.lwip_listen,
-            self.s,
+            self._lwip.lwip_listen,
+            self._s,
             backlog,
         )
 
-    def accept(self):
-        addr, paddr_len = self._create_address_buffer()
+    def accept(self) -> tuple['Socket', tuple]:
+        sa, paddr_len = SockAddr.create_empty_sockaddr_paddrlen()
         s = Socket(
-            self.lwip,
+            self._lwip,
             self.family,
+            self.type,
+            self.proto,
             check_ret_errno(
                 "accept",
-                self.lwip.lwip_accept,
-                self.s,
-                ffi.cast('struct sockaddr *', addr),
+                self._lwip.lwip_accept,
+                self._s,
+                sa.sockaddr,
                 paddr_len,
             ),
         )
 
-        return s, self._unparse_address(addr, paddr_len)
+        return s, sa.unparse_address()
 
     def connect(self, address):
-        addr, addr_len = self._parse_address(address)
+        sa = SockAddr.parse_address(address)
         return check_ret_errno(
             "connect",
-            self.lwip.lwip_connect,
-            self.s,
-            ffi.cast('struct sockaddr *', addr),
-            addr_len,
+            self._lwip.lwip_connect,
+            self._s,
+            sa.sockaddr,
+            sa.len,
+        )
+    
+    def connect_ex(self, address):
+        sa = SockAddr.parse_address(address)
+        return self._lwip.lwip_connect(
+            self._s,
+            sa.sockaddr,
+            sa.len,
         )
 
     def recv(self, bufsize, flags=0):
         buffer = ffi.new("char[]", bufsize)
         ret = check_ret_errno(
             "recv",
-            self.lwip.lwip_recv,
-            self.s,
+            self._lwip.lwip_recv,
+            self._s,
             buffer,
             bufsize,
             flags,
         )
         return ffi.buffer(buffer, ret)[:]
+    
+    def recv_into(self, buffer: bytearray | memoryview, nbytes: int = 0, flags: int = 0) -> int:
+        buflen = len(buffer)
+        if nbytes < 0:
+            raise ValueError('negative buffersize in recv_into')
+        if nbytes == 0:
+            nbytes = buflen
+        if buflen < nbytes:
+            raise ValueError('buffer too small for requested bytes')
+        return check_ret_errno(
+            'recv',
+            self._lwip.lwip_recv,
+            self._s,
+            ffi.from_buffer(buffer, require_writable=True),
+            nbytes,
+            flags,
+        )
 
     def recvfrom(self, bufsize, flags=0):
         buffer = ffi.new("char[]", bufsize)
-        addr, paddr_len = self._create_address_buffer()
+        sa, paddr_len = SockAddr.create_empty_sockaddr_paddrlen()
         ret = check_ret_errno(
-            "recv",
-            self.lwip.lwip_recvfrom,
-            self.s,
+            "recvfrom",
+            self._lwip.lwip_recvfrom,
+            self._s,
             buffer,
             bufsize,
             flags,
-            ffi.cast('struct sockaddr *', addr),
+            sa.sockaddr,
             paddr_len,
         )
-        return ffi.buffer(buffer, ret)[:], self._unparse_address(addr, paddr_len)
+        return ffi.buffer(buffer, ret)[:], sa.unparse_address()
+    
+    def recvfrom_into(self, buffer: bytearray | memoryview, nbytes: int = 0, flags: int = 0) -> tuple[int, tuple]:
+        buflen = len(buffer)
+        if nbytes < 0:
+            raise ValueError('negative buffersize in recv_into')
+        if nbytes == 0:
+            nbytes = buflen
+        if buflen < nbytes:
+            raise ValueError('buffer too small for requested bytes')
+        
+        sa, paddr_len = SockAddr.create_empty_sockaddr_paddrlen()
+        ret = check_ret_errno(
+            'recvfrom',
+            self._lwip.lwip_recvfrom,
+            self._s,
+            ffi.from_buffer(buffer, require_writable=True),
+            nbytes,
+            flags,
+            sa.sockaddr,
+            paddr_len,
+        )
+        return ret, sa.unparse_address()
+    
+    def recvmsg(self, bufsize: int, ancbufsize: int = 0, flags: int = 0) -> tuple[bytes, list, int, tuple | None]:
+        if ancbufsize != 0:
+            raise LwipError('receiving ancillary data is not supported')
+        msg = ffi.new('struct msghdr *')
+        sa = SockAddr.create_empty_sockaddr()
+        msg.msg_name = sa.sockaddr
+        msg.msg_namelen = sa.len
+        iov = ffi.new('struct iovec *')
+        iov_base = ffi.new('char[]', bufsize)
+        iov.iov_base = iov_base
+        iov.iov_len = bufsize
+        msg.msg_iov = iov
+        msg.msg_iovlen = 1
+        msg.msg_control = ffi.NULL
+
+        ret = check_ret_errno(
+            'recvmsg',
+            self._lwip.lwip_recvmsg,
+            self._s,
+            msg,
+            flags,
+        )
+
+        if sa.family == socket.AF_UNSPEC:
+            address = None
+        else:
+            address = sa.unparse_address()
+
+        return (
+            ffi.buffer(iov_base, ret)[:],
+            [],
+            msg.msg_flags,
+            address,
+        )
+    
+    def recvmsg_into(
+        self,
+        buffers: Iterable[bytearray | memoryview],
+        ancbufsize: int = 0,
+        flags: int = 0,
+    ) -> tuple[int, list, int, tuple | None]:
+        if ancbufsize != 0:
+            raise LwipError('receiving ancillary data is not supported')
+        buffers = tuple(buffers)
+        if len(buffers) > defs.IOV_MAX:
+            raise OSError('length of buffers exceeded IOV_MAX')
+        msg = ffi.new('struct msghdr *')
+        sa = SockAddr.create_empty_sockaddr()
+        msg.msg_name = sa.sockaddr
+        msg.msg_namelen = sa.len
+        iov_contents = [
+            {'iov_base': ffi.from_buffer(b, require_writable=True), 'iov_len': len(b)}
+            for b in buffers
+        ]
+        iov = ffi.new('struct iovec []', iov_contents)
+        msg.msg_iov = iov
+        msg.msg_iovlen = len(iov_contents)
+        msg.msg_control = ffi.NULL
+
+        ret = check_ret_errno(
+            'recvmsg',
+            self._lwip.lwip_recvmsg,
+            self._s,
+            msg,
+            flags,
+        )
+
+        if sa.family == socket.AF_UNSPEC:
+            address = None
+        else:
+            address = sa.unparse_address()
+
+        return (
+            ret,
+            [],
+            msg.msg_flags,
+            address,
+        )
 
     def send(self, payload, flags=0):
         return check_ret_errno(
             "send",
-            self.lwip.lwip_send,
-            self.s,
+            self._lwip.lwip_send,
+            self._s,
             payload,
             len(payload),
             flags,
         )
+    
+    @overload
+    def sendto(self, payload: bytes | bytearray | memoryview, address: tuple, /) -> int:
+        ...
+    
+    @overload
+    def sendto(self, payload: bytes | bytearray | memoryview, flags: int, address: tuple, /) -> int:
+        ...
 
-    def sendto(self, payload, address, flags=0):
-        """
-        Differences from Python's socket.sendto:
-            - flags is a named argument instead of a positional one
-        """
-        addr, addr_len = self._parse_address(address)
+    def sendto(self, payload, arg2, arg3 = None) -> int:
+        if arg3 is None:
+            address = arg2
+            flags = 0
+        else:
+            flags = arg2
+            address = arg3
+        sa = SockAddr.parse_address(address)
         return check_ret_errno(
             "sendto",
-            self.lwip.lwip_sendto,
-            self.s,
+            self._lwip.lwip_sendto,
+            self._s,
             payload,
             len(payload),
             flags,
-            ffi.cast('struct sockaddr *', addr),
-            addr_len,
+            sa.sockaddr,
+            sa.len,
+        )
+    
+    def sendmsg(
+        self,
+        buffers: Iterable[bytes | bytearray | memoryview],
+        ancdata: Iterable[tuple] | None = None,
+        flags: int = 0,
+        address: tuple | None = None,
+    ) -> int:
+        if ancdata:
+            raise LwipError('sending ancillary data is not supported')
+        buffers = tuple(buffers)
+        if len(buffers) > defs.IOV_MAX:
+            raise OSError('length of buffers exceeded IOV_MAX')
+        msg = ffi.new('struct msghdr *')
+        if address is not None:
+            sa = SockAddr.parse_address(address)
+            msg.msg_name = sa.sockaddr
+            msg.msg_namelen = sa.len
+        else:
+            msg.msg_name = ffi.NULL
+        iov_contents = [
+            {'iov_base': ffi.from_buffer(b), 'iov_len': len(b)}
+            for b in buffers
+        ]
+        iov = ffi.new('struct iovec []', iov_contents)
+        msg.msg_iov = iov
+        msg.msg_iovlen = len(iov_contents)
+        msg.msg_control = ffi.NULL
+
+        return check_ret_errno(
+            'sendmsg',
+            self._lwip.lwip_sendmsg,
+            self._s,
+            msg,
+            flags,
+        )
+    
+    def shutdown(self, how: int) -> None:
+        check_ret_errno(
+            'shutdown',
+            self._lwip.lwip_shutdown,
+            self._s,
+            how,
         )
 
     def close(self):
-        if self.s >= 0:
-            self.lwip.lwip_close(self.s)
-            self.s = -1
+        if self._s >= 0:
+            try:
+                check_ret_errno('close', self._lwip.lwip_close, self._s)
+            finally:
+                self._s = -1
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-    
-    def _create_sockaddr(self):
-        if self.family == AF_INET:
-            addr = ffi.new('struct sockaddr_in *')
-            addr_len = ffi.sizeof('struct sockaddr_in')
-            addr.sin_len = addr_len
-            addr.sin_family = self.family
-        elif self.family == AF_INET6:
-            addr = ffi.new('struct sockaddr_in6 *')
-            addr_len = ffi.sizeof('struct sockaddr_in6')
-            addr.sin6_len = addr_len
-            addr.sin6_family = self.family
-        else:
-            assert False, 'Unexpected family'
-        return addr, addr_len
-
-    def _create_address_buffer(self):
-        """
-        Creates a new `struct sockaddr_in` structure to hold addresses returned by
-        methods like connect / recvfrom / etc.
-
-        NOTE: The returned objects hold ownership of the structure and pointers, keep
-        a reference in a variable to them while they are needed to prevent the GC from
-        freeing them while they are still in use.
-
-        :return: (struct sockaddr_in* or struct sockaddr_in6*, socklen_t*)
-                 Created structure and a pointer variable containing its size.
-        """
-        paddr_len = ffi.new("socklen_t*")
-        addr, addr_len = self._create_sockaddr()
-        paddr_len[0] = addr_len
-        return addr, paddr_len
-
-    def _parse_address(self, address):
-        """
-        Parses an address from Python's socket API format into a `struct sockaddr*`.
-
-        Note the type of return values, and cast to "struct sockaddr*" as required.
-
-        TODO: This does not work for dual-stack sockets accepting an IPv4 connection.
-
-        :param address: (host, port) tuple
-        :return: (struct sockaddr_in* or struct sockaddr_in6*, int)
-                 Parsed address and length of the address, in bytes.
-        """
-        saddr, addr_len = self._create_sockaddr()
-        if self.family == AF_INET:
-            if not isinstance(address, tuple) or len(address) != 2:
-                raise TypeError("Only (host, port) tuples are supported (AF_INET)")
-
-            host, port = address
-            if not host:
-                host = INADDR_ANY
-            else:
-                host = socket.inet_pton(socket.AF_INET, host)
-
-            ffi.memmove(ffi.buffer(ffi.addressof(saddr, 'sin_addr')), host, 4)
-            saddr.sin_port = socket.htons(port)
-            return saddr, addr_len
-        elif self.family == AF_INET6:
-            if not isinstance(address, tuple) or len(address) != 4:
-                raise TypeError("Only (host, port, flowinfo, scope_id) tuples are supported (AF_INET6)")
-            host, port, flowinfo, scope_id = address
-            if not host:
-                host = bytes(16)
-            else:
-                host = socket.inet_pton(socket.AF_INET6, host)
-            saddr.sin6_port = socket.htons(port)
-            saddr.sin6_flowinfo = flowinfo
-            ffi.memmove(ffi.buffer(ffi.addressof(saddr, 'sin6_addr')), host, 16)
-            saddr.sin6_scope_id = scope_id
-            return saddr, addr_len
-        assert False, 'Unexpected family'
-
-    def _unparse_address(self, sockaddr, _paddr_len):
-        """
-        Takes a `struct sockaddr*` and `socklen_t*` as input and returns the same
-        address in the format specified by Python's socket API. This is the inverse
-        function of _parse_address.
-
-        :param sockaddr: `struct sockaddr*`
-        :param _paddr_len:  `socklen_t*` Real size of address
-        :return: (host, port)
-        """
-        assert ffi.cast("struct sockaddr*", sockaddr).sa_family == self.family, 'Unexpected family'
-
-        if self.family == AF_INET:
-            sockaddr_in = ffi.cast('struct sockaddr_in *', sockaddr)
-            assert _paddr_len[0] >= sockaddr_in.sin_len, 'addr_len too small'
-            host = socket.inet_ntop(socket.AF_INET, ffi.buffer(ffi.addressof(sockaddr_in, 'sin_addr'))[:])
-            port = socket.ntohs(sockaddr_in.sin_port)
-            return host, port
-        elif self.family == AF_INET6:
-            sockaddr_in6 = ffi.cast('struct sockaddr_in6 *', sockaddr)
-            assert _paddr_len[0] >= sockaddr_in6.sin6_len, 'addr_len too small'
-            host = socket.inet_ntop(socket.AF_INET6, ffi.buffer(ffi.addressof(sockaddr_in6, 'sin6_addr'))[:])
-            port = socket.ntohs(sockaddr_in6.sin6_port)
-            flowinfo = sockaddr_in6.sin6_flowinfo
-            scope_id = sockaddr_in6.sin6_scope_id
-            return host, port, flowinfo, scope_id
-        assert False, 'family fallthrough'
 
     def __repr__(self):
-        return f"LwipSocket(fd={self.s})"
+        return f"LwipSocket(fd={self._s}, family={self.family}, type={self.type}, proto={self.proto})"
+
+    def getpeername(self):
+        sa, paddr_len = SockAddr.create_empty_sockaddr_paddrlen()
+        check_ret_errno(
+            'getpeername',
+            self._lwip.lwip_getpeername,
+            self._s,
+            sa.sockaddr,
+            paddr_len,
+        )
+        return sa.unparse_address()
+    
+    def getsockname(self):
+        sa, paddr_len = SockAddr.create_empty_sockaddr_paddrlen()
+        check_ret_errno(
+            'getsockname',
+            self._lwip.lwip_getsockname,
+            self._s,
+            sa.sockaddr,
+            paddr_len,
+        )
+        return sa.unparse_address()
+    
+    @overload
+    def lwip_setsockopt(
+        self,
+        level: int,
+        optname: int,
+        value: int | bytes | bytearray | memoryview,
+    )-> None:
+        ...
+    
+    @overload
+    def lwip_setsockopt(
+        self,
+        level: int,
+        optname: int,
+        value: None,
+        optlen: int,
+    ) -> None:
+        ...
+    
+    def lwip_setsockopt(
+            self,
+            level,
+            optname,
+            value,
+            optlen = None,
+        ) -> None:
+        """
+        setsockopt that takes LwIP's constants.
+
+        The constants used for `level` and `optname`
+        (as well as structs that may be used in `value`, etc.)
+        are different between LwIP and Linux.
+        This method accepts those defined by LwIP.
+        """
+        if optlen is None:
+            if value is None:
+                raise ValueError('value and optlen must not be None at the same time')
+            elif isinstance(value, int):
+                optval = ffi.new('int *')
+                optval[0] = value
+                optlen = ffi.sizeof('int')
+            else:
+                optval = ffi.buffer(value)
+                optlen = len(value)
+        else:  # optlen is not None
+            if value is not None:
+                raise ValueError('value and optlen cannot be not-None at the same time')
+            optval = ffi.NULL
+            optlen = optlen
+
+        check_ret_errno(
+            'setsockopt',
+            self._lwip.lwip_setsockopt,
+            self._s,
+            level,
+            optname,
+            optval,
+            optlen,
+        )
+    
+    @overload
+    def setsockopt(
+        self,
+        level: int,
+        optname: int,
+        value: int | bytes | bytearray | memoryview,
+    )-> None:
+        ...
+    
+    @overload
+    def setsockopt(
+        self,
+        level: int,
+        optname: int,
+        value: None,
+        optlen: int,
+    ) -> None:
+        ...
+    
+    def setsockopt(self, level, optname, value, optlen=None) -> None:
+        """
+        setsockopt that takes socket module constants, intended for compatibility with existing socket code.
+
+        This method accepts `level` and `optname` defined in the socket module,
+        and translate them to corresponding LwIP constants.
+        Only those constants that exist in the socket module are recognized
+        (for example, `socket` does not have IP_PKTINFO).
+        Also, structs that may be used in `value` are not translated.
+        Use `lwip_setsockopt` for those use cases.
+        """
+        # TODO: guard against the socket module not having these constants
+        lwip_level = None
+        if level == socket.SOL_SOCKET:
+            lwip_level = defs.SOL_SOCKET
+            try:
+                lwip_optname = compat_translate.SO_socket[optname].lwip_value
+            except KeyError:
+                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level SOL_SOCKET')
+        elif level == socket.IPPROTO_IP:
+            try:
+                lwip_optname = compat_translate.IP_socket[optname].lwip_value
+            except KeyError:
+                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_IP')
+        elif level == socket.IPPROTO_TCP:
+            try:
+                lwip_optname = compat_translate.TCP_socket[optname].lwip_value
+            except KeyError:
+                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_TCP')
+        elif level == socket.IPPROTO_IPV6:
+            try:
+                lwip_optname = compat_translate.IPV6_socket[optname].lwip_value
+            except KeyError:
+                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_IPV6')
+        elif level == socket.IPPROTO_UDPLITE:
+            try:
+                lwip_optname = compat_translate.UDPLITE_socket[optname].lwip_value
+            except KeyError:
+                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_UDPLITE')
+        elif level == socket.IPPROTO_RAW:
+            if optname == socket.IPV6_CHECKSUM:
+                lwip_optname = defs.IPV6_CHECKSUM
+            else:
+                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_RAW')
+        else:
+            raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding level for {level}')
+        
+        if lwip_level is None:
+            lwip_level = level
+        
+        self.lwip_setsockopt(lwip_level, lwip_optname, value, optlen)
+    
+    @overload
+    def lwip_getsockopt(
+        self,
+        level: int,
+        optname: int,
+    ) -> int:
+        ...
+    
+    @overload
+    def lwip_getsockopt(
+        self,
+        level: int,
+        optname: int,
+        buflen: int,
+    ) -> bytes:
+        ...
+    
+    def lwip_getsockopt(
+        self,
+        level: int,
+        optname: int,
+        buflen = None,
+    ):
+        """
+        getsockopt that takes LwIP's constants.
+
+        Refer to documentation on `lwip_setsockopt` and `setsockopt`.
+        """
+        optlen = ffi.new('socklen_t *')
+        if buflen is not None:
+            optval = ffi.new('char[]', buflen)
+            optlen[0] = buflen
+        else:
+            optval = ffi.new('int *')
+            optlen[0] = ffi.sizeof('int')
+        
+        check_ret_errno(
+            'getsockopt',
+            self._lwip.lwip_getsockopt,
+            self._s,
+            level,
+            optname,
+            optval,
+            optlen,
+        )
+
+        if buflen is not None:
+            return ffi.buffer(optval)[:]
+        else:
+            return optval[0]
+    
+    @overload
+    def getsockopt(
+        self,
+        level: int,
+        optname: int,
+    ) -> int:
+        ...
+    
+    @overload
+    def getsockopt(
+        self,
+        level: int,
+        optname: int,
+        buflen: int,
+    ) -> bytes:
+        ...
+
+    def getsockopt(self, level, optname, buflen=None) -> int | bytes:
+        """
+        getsockopt that takes socket module constants.
+
+        Refer to documentation on `lwip_setsockopt` and `setsockopt`.
+        """
+
+        # TODO: guard against the socket module not having these constants
+        lwip_level = None
+        if level == socket.SOL_SOCKET:
+            lwip_level = defs.SOL_SOCKET
+            try:
+                lwip_optname = compat_translate.SO_socket[optname].lwip_value
+            except KeyError:
+                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level SOL_SOCKET')
+        elif level == socket.IPPROTO_IP:
+            try:
+                lwip_optname = compat_translate.IP_socket[optname].lwip_value
+            except KeyError:
+                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_IP')
+        elif level == socket.IPPROTO_TCP:
+            try:
+                lwip_optname = compat_translate.TCP_socket[optname].lwip_value
+            except KeyError:
+                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_TCP')
+        elif level == socket.IPPROTO_IPV6:
+            try:
+                lwip_optname = compat_translate.IPV6_socket[optname].lwip_value
+            except KeyError:
+                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_IPV6')
+        elif level == socket.IPPROTO_UDPLITE:
+            try:
+                lwip_optname = compat_translate.UDPLITE_socket[optname].lwip_value
+            except KeyError:
+                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_UDPLITE')
+        elif level == socket.IPPROTO_RAW:
+            if optname == socket.IPV6_CHECKSUM:
+                lwip_optname = defs.IPV6_CHECKSUM
+            else:
+                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_RAW')
+        else:
+            raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding level for {level}')
+        
+        if lwip_level is None:
+            lwip_level = level
+        
+        return self.lwip_getsockopt(lwip_level, lwip_optname, buflen)
+    
+    def lwip_ioctl(self, cmd: int, arg: int = 0) -> int:
+        """
+        Perform ioctl on the socket.
+
+        In LwIP, argp can only be an int pointer, so arg only takes an int.
+
+        Returns the content of argp as an int.
+        """
+        argp = ffi.new('int *')
+        argp[0] = arg
+        check_ret_errno(
+            'ioctl',
+            self._lwip.lwip_ioctl,
+            self._s,
+            cmd,
+            argp,
+        )
+        return argp[0]
+
+    
+    def lwip_fcntl(self, cmd: int, val: int = 0) -> int:
+        """
+        Perform fcntl on the socket.
+
+        val can only be an int.
+
+        Returns the return value of fcntl.
+        """
+        return check_ret_errno(
+            'fcntl',
+            self._lwip.lwip_fcntl,
+            self._s,
+            cmd,
+            val,
+        )
+    
+    def getblocking(self) -> bool:
+        """
+        Return True if socket is in blocking mode, False otherwise.
+
+        We do not support {get,set}timeout,
+        and do not maintain a timeout / blocking state.
+        So this method always query LwIP internals.
+        """
+        flags = self.lwip_fcntl(defs.F_GETFL)
+        return not bool(flags & defs.O_NONBLOCK)
+    
+    def setblocking(self, blocking: bool) -> None:
+        self.lwip_ioctl(defs.FIONBIO, int(not blocking))
