@@ -38,7 +38,7 @@ class LwIP:
         self.allocs.append(new_netif)
         return new_netif
 
-    def socket(self, family, socket_type, proto=0):
+    def socket(self, family, socket_type, proto=0) -> Socket:
         """
         Creates a new socket, in a similar way to how Python's `socket.socket()` function works
 
