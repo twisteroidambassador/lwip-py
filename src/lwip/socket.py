@@ -465,6 +465,9 @@ class Socket:
         )
 
     def close(self):
+        """
+        NOTE: this method is not thread safe. Do not call from multiple threads concurrently.
+        """
         if self._s >= 0:
             try:
                 check_ret_errno('close', self._lwip.lwip_close, self._s)
