@@ -52,6 +52,7 @@
 #include "lwip/inet.h"
 #include "lwip/init.h"
 #include "lwip/netif.h"
+#include "lwip/netifapi.h"
 #include "lwip/sockets.h"
 #include "lwip/stats.h"
 #include "lwip/sys.h"
