@@ -54,6 +54,65 @@ class LwIP:
             proto,
         )
         return Socket(self.lwip, family, socket_type, proto, s)
+    
+    def socketpair(
+        self,
+        family: int = AF_INET,
+        type_: int = SOCK_STREAM,
+        proto: int = 0,
+        blocking: bool = True,
+    ) -> tuple[Socket, Socket]:
+        """
+        Create two lwIP sockets connected to each other.
+
+        :param family: the family of the created socket: AF_INET or AF_INET6.
+        :param type_: the type of the socket: SOCK_STREAM or SOCK_DGRAM.
+        :param proto: the proto of the socket. Usually 0.
+        :param blocking: set blocking / nonblocking for the returned sockets.
+        """
+        if family == AF_INET:
+            local_bind_address = ('127.0.0.1', 0)
+        elif family == AF_INET6:
+            local_bind_address = ('::1', 0, 0, 0)
+        else:
+            raise ValueError('Invalid family')
+        
+        server_sock = client_sock = None
+        try:
+            if type_ == SOCK_STREAM:
+                listen_sock = self.socket(family, type_, proto)
+                try:
+                    listen_sock.bind(local_bind_address)
+                    listen_sock.listen()
+                    client_sock = self.socket(family, type_, proto)
+                    client_sock.setblocking(False)
+                    client_sock.connect_ex(listen_sock.getsockname())
+                    server_sock, _ = listen_sock.accept()
+                finally:
+                    listen_sock.close()
+            elif type_ == SOCK_DGRAM:
+                server_sock = self.socket(family, type_, proto)
+                client_sock = self.socket(family, type_, proto)
+                
+                server_sock.bind(local_bind_address)
+                client_sock.connect_ex(server_sock.getsockname())
+                server_sock.connect_ex(client_sock.getsockname())
+            else:
+                raise ValueError('Invalid type')
+            
+            if server_sock.getsockname() != client_sock.getpeername() or server_sock.getpeername() != client_sock.getsockname():
+                raise ConnectionError('socket pair not connected to each other')
+            
+            client_sock.setblocking(blocking)
+            server_sock.setblocking(blocking)
+            
+            return client_sock, server_sock
+        except:
+            if server_sock is not None:
+                server_sock.close()
+            if client_sock is not None:
+                client_sock.close()
+            raise
 
     def set_routing_function(self, routing_fn):
         """
