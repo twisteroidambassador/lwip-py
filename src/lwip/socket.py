@@ -595,44 +595,10 @@ class Socket:
         Also, structs that may be used in `value` are not translated.
         Use `lwip_setsockopt` for those use cases.
         """
-        # TODO: guard against the socket module not having these constants
-        lwip_level = None
-        if level == socket.SOL_SOCKET:
-            lwip_level = defs.SOL_SOCKET
-            try:
-                lwip_optname = compat_translate.SO_socket[optname].lwip_value
-            except KeyError:
-                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level SOL_SOCKET')
-        elif level == socket.IPPROTO_IP:
-            try:
-                lwip_optname = compat_translate.IP_socket[optname].lwip_value
-            except KeyError:
-                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_IP')
-        elif level == socket.IPPROTO_TCP:
-            try:
-                lwip_optname = compat_translate.TCP_socket[optname].lwip_value
-            except KeyError:
-                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_TCP')
-        elif level == socket.IPPROTO_IPV6:
-            try:
-                lwip_optname = compat_translate.IPV6_socket[optname].lwip_value
-            except KeyError:
-                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_IPV6')
-        elif level == socket.IPPROTO_UDPLITE:
-            try:
-                lwip_optname = compat_translate.UDPLITE_socket[optname].lwip_value
-            except KeyError:
-                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_UDPLITE')
-        elif level == socket.IPPROTO_RAW:
-            if optname == socket.IPV6_CHECKSUM:
-                lwip_optname = defs.IPV6_CHECKSUM
-            else:
-                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_RAW')
-        else:
-            raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding level for {level}')
-        
-        if lwip_level is None:
-            lwip_level = level
+        try:
+            lwip_level, lwip_optname = compat_translate.translate_sockopt(level, optname)
+        except ValueError as e:
+            raise OSError(errno.ENOPROTOOPT, f'LwIP: {e.args[0]}')
         
         self.lwip_setsockopt(lwip_level, lwip_optname, value, optlen)
     
@@ -710,45 +676,10 @@ class Socket:
 
         Refer to documentation on `lwip_setsockopt` and `setsockopt`.
         """
-
-        # TODO: guard against the socket module not having these constants
-        lwip_level = None
-        if level == socket.SOL_SOCKET:
-            lwip_level = defs.SOL_SOCKET
-            try:
-                lwip_optname = compat_translate.SO_socket[optname].lwip_value
-            except KeyError:
-                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level SOL_SOCKET')
-        elif level == socket.IPPROTO_IP:
-            try:
-                lwip_optname = compat_translate.IP_socket[optname].lwip_value
-            except KeyError:
-                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_IP')
-        elif level == socket.IPPROTO_TCP:
-            try:
-                lwip_optname = compat_translate.TCP_socket[optname].lwip_value
-            except KeyError:
-                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_TCP')
-        elif level == socket.IPPROTO_IPV6:
-            try:
-                lwip_optname = compat_translate.IPV6_socket[optname].lwip_value
-            except KeyError:
-                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_IPV6')
-        elif level == socket.IPPROTO_UDPLITE:
-            try:
-                lwip_optname = compat_translate.UDPLITE_socket[optname].lwip_value
-            except KeyError:
-                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_UDPLITE')
-        elif level == socket.IPPROTO_RAW:
-            if optname == socket.IPV6_CHECKSUM:
-                lwip_optname = defs.IPV6_CHECKSUM
-            else:
-                raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding optname for {optname} in level IPPROTO_RAW')
-        else:
-            raise OSError(errno.ENOPROTOOPT, f'LwIP: No corresponding level for {level}')
-        
-        if lwip_level is None:
-            lwip_level = level
+        try:
+            lwip_level, lwip_optname = compat_translate.translate_sockopt(level, optname)
+        except ValueError as e:
+            raise OSError(errno.ENOPROTOOPT, f'LwIP: {e.args[0]}')
         
         return self.lwip_getsockopt(lwip_level, lwip_optname, buflen)
     
