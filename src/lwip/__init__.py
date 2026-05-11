@@ -5,7 +5,7 @@ from tempfile import NamedTemporaryFile
 from . import compat_asserts  # type: ignore
 from .ffi import ffi
 from .defs import SOCK_STREAM, SOCK_DGRAM, AF_INET, AF_INET6
-from .lwip_error import LwipError, check_ret_errno
+from .lwip_error import LwipError, check_ret, check_ret_errno
 from .netif import Netif
 from .netif.driver import NetifDriver
 from .socket import Socket
@@ -137,6 +137,11 @@ class LwIP:
 
         self.routing_hook = hook  # Prevent GC from taking it
         self.lwip.set_ip4_route_fn_override(hook)
+    
+    def netif_index_to_name(self, idx: int) -> bytes:
+        buf = ffi.new('char[]', 6)  # NETIF_NAMESIZE == 6
+        check_ret('netifapi_netif_index_to_name', self.lwip.netifapi_netif_index_to_name(idx, buf))
+        return ffi.string(buf)
 
 
 def _load_lwip(so_path: str | None = None, private: bool = False):
