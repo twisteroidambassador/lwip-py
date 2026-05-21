@@ -206,7 +206,7 @@ class Socket:
         sa = SockAddr.parse_address(address)
         return check_ret_errno(
             'bind',
-            self._lwip.lwip_bind,
+            self._lwip.lwip.lwip_bind,
             self._s,
             sa.sockaddr,
             sa.len,
@@ -218,7 +218,7 @@ class Socket:
 
         return check_ret_errno(
             "listen",
-            self._lwip.lwip_listen,
+            self._lwip.lwip.lwip_listen,
             self._s,
             backlog,
         )
@@ -232,7 +232,7 @@ class Socket:
             self.proto,
             check_ret_errno(
                 "accept",
-                self._lwip.lwip_accept,
+                self._lwip.lwip.lwip_accept,
                 self._s,
                 sa.sockaddr,
                 paddr_len,
@@ -245,7 +245,7 @@ class Socket:
         sa = SockAddr.parse_address(address)
         return check_ret_errno(
             "connect",
-            self._lwip.lwip_connect,
+            self._lwip.lwip.lwip_connect,
             self._s,
             sa.sockaddr,
             sa.len,
@@ -253,7 +253,7 @@ class Socket:
     
     def connect_ex(self, address):
         sa = SockAddr.parse_address(address)
-        return self._lwip.lwip_connect(
+        return self._lwip.lwip.lwip_connect(
             self._s,
             sa.sockaddr,
             sa.len,
@@ -263,7 +263,7 @@ class Socket:
         buffer = ffi.new("char[]", bufsize)
         ret = check_ret_errno(
             "recv",
-            self._lwip.lwip_recv,
+            self._lwip.lwip.lwip_recv,
             self._s,
             buffer,
             bufsize,
@@ -281,7 +281,7 @@ class Socket:
             raise ValueError('buffer too small for requested bytes')
         return check_ret_errno(
             'recv',
-            self._lwip.lwip_recv,
+            self._lwip.lwip.lwip_recv,
             self._s,
             ffi.from_buffer(buffer, require_writable=True),
             nbytes,
@@ -293,7 +293,7 @@ class Socket:
         sa, paddr_len = SockAddr.create_empty_sockaddr_paddrlen()
         ret = check_ret_errno(
             "recvfrom",
-            self._lwip.lwip_recvfrom,
+            self._lwip.lwip.lwip_recvfrom,
             self._s,
             buffer,
             bufsize,
@@ -315,7 +315,7 @@ class Socket:
         sa, paddr_len = SockAddr.create_empty_sockaddr_paddrlen()
         ret = check_ret_errno(
             'recvfrom',
-            self._lwip.lwip_recvfrom,
+            self._lwip.lwip.lwip_recvfrom,
             self._s,
             ffi.from_buffer(buffer, require_writable=True),
             nbytes,
@@ -342,7 +342,7 @@ class Socket:
 
         ret = check_ret_errno(
             'recvmsg',
-            self._lwip.lwip_recvmsg,
+            self._lwip.lwip.lwip_recvmsg,
             self._s,
             msg,
             flags,
@@ -386,7 +386,7 @@ class Socket:
 
         ret = check_ret_errno(
             'recvmsg',
-            self._lwip.lwip_recvmsg,
+            self._lwip.lwip.lwip_recvmsg,
             self._s,
             msg,
             flags,
@@ -407,7 +407,7 @@ class Socket:
     def send(self, payload, flags=0):
         return check_ret_errno(
             "send",
-            self._lwip.lwip_send,
+            self._lwip.lwip.lwip_send,
             self._s,
             ffi.from_buffer(payload),
             len(payload),
@@ -438,7 +438,7 @@ class Socket:
         sa = SockAddr.parse_address(address)
         return check_ret_errno(
             "sendto",
-            self._lwip.lwip_sendto,
+            self._lwip.lwip.lwip_sendto,
             self._s,
             ffi.from_buffer(payload),
             len(payload),
@@ -477,7 +477,7 @@ class Socket:
 
         return check_ret_errno(
             'sendmsg',
-            self._lwip.lwip_sendmsg,
+            self._lwip.lwip.lwip_sendmsg,
             self._s,
             msg,
             flags,
@@ -486,7 +486,7 @@ class Socket:
     def shutdown(self, how: int) -> None:
         check_ret_errno(
             'shutdown',
-            self._lwip.lwip_shutdown,
+            self._lwip.lwip.lwip_shutdown,
             self._s,
             how,
         )
@@ -499,7 +499,7 @@ class Socket:
         """
         if self._s >= 0:
             try:
-                check_ret_errno('close', self._lwip.lwip_close, self._s)
+                check_ret_errno('close', self._lwip.lwip.lwip_close, self._s)
             finally:
                 self._s = -1
 
@@ -516,7 +516,7 @@ class Socket:
         sa, paddr_len = SockAddr.create_empty_sockaddr_paddrlen()
         check_ret_errno(
             'getpeername',
-            self._lwip.lwip_getpeername,
+            self._lwip.lwip.lwip_getpeername,
             self._s,
             sa.sockaddr,
             paddr_len,
@@ -527,7 +527,7 @@ class Socket:
         sa, paddr_len = SockAddr.create_empty_sockaddr_paddrlen()
         check_ret_errno(
             'getsockname',
-            self._lwip.lwip_getsockname,
+            self._lwip.lwip.lwip_getsockname,
             self._s,
             sa.sockaddr,
             paddr_len,
@@ -586,7 +586,7 @@ class Socket:
 
         check_ret_errno(
             'setsockopt',
-            self._lwip.lwip_setsockopt,
+            self._lwip.lwip.lwip_setsockopt,
             self._s,
             level,
             optname,
@@ -669,7 +669,7 @@ class Socket:
         
         check_ret_errno(
             'getsockopt',
-            self._lwip.lwip_getsockopt,
+            self._lwip.lwip.lwip_getsockopt,
             self._s,
             level,
             optname,
@@ -724,7 +724,7 @@ class Socket:
         argp[0] = arg
         check_ret_errno(
             'ioctl',
-            self._lwip.lwip_ioctl,
+            self._lwip.lwip.lwip_ioctl,
             self._s,
             cmd,
             argp,
@@ -742,7 +742,7 @@ class Socket:
         """
         return check_ret_errno(
             'fcntl',
-            self._lwip.lwip_fcntl,
+            self._lwip.lwip.lwip_fcntl,
             self._s,
             cmd,
             val,

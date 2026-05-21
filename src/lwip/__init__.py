@@ -13,8 +13,31 @@ from .tcpip import tcpip_init
 
 
 class LwIP:
-    def __init__(self, shared_object_path=None):
-        self.lwip = _load_lwip(shared_object_path)
+    def __init__(
+            self,
+            shared_object_path = None,
+            private: bool = False,
+    ):
+        """
+        Load and initialize (a copy of) lwIP library.
+
+        If not simulating separate devices,
+        instantiate this class once with private=False,
+        and use the same instance for all uses.
+
+        If simulating separate devices,
+        instantiate this class multiple times with private=True.
+        Each instance is a separate device.
+
+        Do not instantiate multiple times with private=False.
+
+        :param shared_object_path: Path to liblwip.so.
+        If unspecified, defaults to environment variable "LIBLWIP_PATH" or "./liblwip.so".
+        :param private: If true, load a separate copy of the library that
+        does not share global variables with other instances.
+        This can be useful to simulate separate devices.
+        """
+        self.lwip = _load_lwip(shared_object_path, private=private)
         self.allocs = []  # Prevent GC from freeing memory in use by lwIP
         self.routing_hook = None
         tcpip_init(self.lwip)
@@ -53,7 +76,7 @@ class LwIP:
             socket_type,
             proto,
         )
-        return Socket(self.lwip, family, socket_type, proto, s)
+        return Socket(self, family, socket_type, proto, s)
     
     def socketpair(
         self,
