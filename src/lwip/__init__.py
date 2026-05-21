@@ -8,6 +8,7 @@ from .defs import SOCK_STREAM, SOCK_DGRAM, AF_INET, AF_INET6
 from .lwip_error import LwipError, check_ret, check_ret_errno
 from .netif import Netif
 from .netif.driver import NetifDriver
+from .poll import LwipPoll
 from .socket import Socket
 from .tcpip import tcpip_init
 
@@ -77,6 +78,12 @@ class LwIP:
             proto,
         )
         return Socket(self, family, socket_type, proto, s)
+    
+    def poll(self) -> LwipPoll:
+        """
+        Create a new poll object, similar to Python stdlib's select.poll.
+        """
+        return LwipPoll(self)
     
     def socketpair(
         self,

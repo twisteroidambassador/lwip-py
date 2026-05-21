@@ -1,3 +1,5 @@
+import enum
+
 from .err import *
 from .netif import *
 from .pbuf import *
@@ -101,3 +103,16 @@ IOV_MAX = 0xFFFF
 SHUT_RD = 0
 SHUT_WR = 1
 SHUT_RDWR = 2
+
+
+class PollEvent(enum.IntFlag):
+    POLLIN = 0x1
+    POLLOUT = 0x2
+    POLLERR = 0x4
+    POLLNVAL = 0x8
+    POLLRDNORM = 0x10
+    POLLRDBAND = 0x20
+    POLLPRI = 0x40
+    POLLWRNORM = 0x80
+    POLLWRBAND = 0x100
+    POLLHUP = 0x200
