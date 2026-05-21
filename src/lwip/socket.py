@@ -159,6 +159,7 @@ class Socket:
       lwip.defs and socket,
       and any options defined using structs may not be the same as stdlib sockets.
       use lwip_{get, set}sockopt for advanced features.
+    - fileno() is not supported.
 
     Thread safety:
     The underlying lwIP methods are compied as thread safe (LWIP_NETCONN_FULLDUPLEX),
@@ -167,7 +168,7 @@ class Socket:
     so do not call close() concurrently from multiple threads.
     """
 
-    def __init__(self, lwip_instance, family, type_, proto, fd):
+    def __init__(self, lwip_instance, family: int, type_: int, proto: int, fd: int):
         """
         Private constructor -- use Lwip.socket instead.
         """
