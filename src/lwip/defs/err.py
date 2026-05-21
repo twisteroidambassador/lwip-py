@@ -2,6 +2,9 @@ import enum
 
 @enum.global_enum
 class ErrorCode(enum.IntEnum):
+    """
+    Error codes returned by lwIP API calls.
+    """
     ERR_OK = 0
     ERR_MEM = -1
     ERR_BUF = -2
