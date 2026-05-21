@@ -144,10 +144,27 @@ class SockAddr:
 
 class Socket:
     """
-    lwIP socket abstraction
+    lwIP socket object.
 
-    Implemented methods try to mimic Python's socket API as closely as possible. Exceptions
-    are documented in the offending method's docs.
+    This class is mostly compatible with standard library socket objects.
+    Any implemented method has the same signature as stdlib socket.
+
+    Do not instantiate this class directly.
+    Use LwIP.socket() instead.
+
+    Notable differences:
+    - {get, set}timeout only supports None or 0 timeout (i.e. blocking or non-blocking).
+      Other finite timeout values are not supported.
+    - {get, set}sockopt only supports options specified by constants that exist both in
+      lwip.defs and socket,
+      and any options defined using structs may not be the same as stdlib sockets.
+      use lwip_{get, set}sockopt for advanced features.
+
+    Thread safety:
+    The underlying lwIP methods are compied as thread safe (LWIP_NETCONN_FULLDUPLEX),
+    so calling send* / recv* / close from separate threads is possible.
+    The close() method itself is not thread safe,
+    so do not call close() concurrently from multiple threads.
     """
 
     def __init__(self, lwip_instance, family, type_, proto, fd):
@@ -162,6 +179,10 @@ class Socket:
             # The calling code should use check_ret_errno around the code where fd is obtained
             raise ValueError('Invalid FD')
         self._s = fd
+    
+    @property
+    def lwip_instance(self):
+        return self._lwip
     
     @property
     def family(self) -> int:
@@ -388,10 +409,16 @@ class Socket:
             "send",
             self._lwip.lwip_send,
             self._s,
-            payload,
+            ffi.from_buffer(payload),
             len(payload),
             flags,
         )
+    
+    def sendall(self, payload, flags=0):
+        payload = memoryview(payload)
+        while payload:
+            bytes_sent = self.send(payload, flags)
+            payload = payload[bytes_sent:]
     
     @overload
     def sendto(self, payload: bytes | bytearray | memoryview, address: tuple, /) -> int:
@@ -413,7 +440,7 @@ class Socket:
             "sendto",
             self._lwip.lwip_sendto,
             self._s,
-            payload,
+            ffi.from_buffer(payload),
             len(payload),
             flags,
             sa.sockaddr,
@@ -466,6 +493,8 @@ class Socket:
 
     def close(self):
         """
+        Close the socket.
+
         NOTE: this method is not thread safe. Do not call from multiple threads concurrently.
         """
         if self._s >= 0:
@@ -723,7 +752,7 @@ class Socket:
         """
         Return True if socket is in blocking mode, False otherwise.
 
-        We do not support {get,set}timeout,
+        We do not support settimeout with finite timeout values,
         and do not maintain a timeout / blocking state.
         So this method always query LwIP internals.
         """
@@ -732,3 +761,22 @@ class Socket:
     
     def setblocking(self, blocking: bool) -> None:
         self.lwip_ioctl(defs.FIONBIO, int(not blocking))
+    
+    def gettimeout(self) -> float | None:
+        if self.getblocking():
+            return None
+        return 0.0
+    
+    def settimeout(self, value: float | None) -> None:
+        """
+        Set a timeout on blocking socket operations, except we don't support any timeout other than infinite or 0.
+
+        This method can be used to put the socket in blocking or non-blocking mode.
+        Positive finite timeouts are not supported.
+        """
+        if value is None:
+            self.setblocking(True)
+        elif value == 0.0:
+            self.setblocking(False)
+        else:
+            raise ValueError('Only infinite or 0 timeout supported')
