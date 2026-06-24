@@ -159,7 +159,6 @@ class Socket:
       lwip.defs and socket,
       and any options defined using structs may not be the same as stdlib sockets.
       use lwip_{get, set}sockopt for advanced features.
-    - fileno() is not supported.
 
     Thread safety:
     The underlying lwIP methods are compied as thread safe (LWIP_NETCONN_FULLDUPLEX),
@@ -197,11 +196,8 @@ class Socket:
     def proto(self) -> int:
         return self._proto
     
-    def lwip_fileno(self) -> int:
+    def fileno(self) -> int:
         return self._s
-    
-    def fileno(self):
-        raise LwipError('fileno() not supported on LwIP sockets')
 
     def bind(self, address):
         sa = SockAddr.parse_address(address)

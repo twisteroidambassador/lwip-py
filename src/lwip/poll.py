@@ -34,7 +34,7 @@ class LwipPoll:
         if not isinstance(fd, int):
             if fd.lwip_instance is not self.lwip_instance:
                 raise ValueError('Socket is not on same LwIP instance')
-            fd = fd.lwip_fileno()
+            fd = fd.fileno()
         if fd < 0:
             raise ValueError(f'Invalid fd {fd}')
         return fd

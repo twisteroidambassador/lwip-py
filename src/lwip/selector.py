@@ -9,23 +9,14 @@ from .defs import PollEvent
 from .socket import Socket
 
 
-def _fileobj_to_fd(fileobj: int | Socket):
-    """Return a file descriptor from a file object.
-
-    Parameters:
-    fileobj -- file object or file descriptor
-
-    Returns:
-    corresponding file descriptor
-
-    Raises:
-    ValueError if the object is invalid
-    """
+def _fileobj_to_fd(fileobj: int | Socket, lwip_inst: LwIP):
     if isinstance(fileobj, int):
         fd = fileobj
     else:
+        if fileobj.lwip_instance is not lwip_inst:
+            raise ValueError('Socket is not on same lwIP instance')
         try:
-            fd = int(fileobj.lwip_fileno())
+            fd = int(fileobj.fileno())
         except (AttributeError, TypeError, ValueError):
             raise ValueError("Invalid file object: "
                              "{!r}".format(fileobj)) from None
@@ -51,6 +42,7 @@ class LwipPollSelector(selectors._PollLikeSelector):
 
         :param lwip_inst: the LwIP instance.
         """
+        self._lwip = lwip_inst
         self._selector_cls = lwip_inst.poll
         super().__init__()
     
@@ -64,7 +56,7 @@ class LwipPollSelector(selectors._PollLikeSelector):
         used by _SelectorMapping.
         """
         try:
-            return _fileobj_to_fd(fileobj)
+            return _fileobj_to_fd(fileobj, self._lwip)
         except ValueError:
             # Do an exhaustive search.
             for key in self._fd_to_key.values():
