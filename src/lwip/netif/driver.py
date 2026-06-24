@@ -28,7 +28,7 @@ class NetifDriver:
         """
         raise NotImplementedError
     
-    def lwip_on_outpu_ip6(self, payload: bytes, dst_ip: bytes, zone: int):
+    def lwip_on_output_ip6(self, payload: bytes, dst_ip: bytes, zone: int):
         """
         Called by lwIP when it needs to output an IPv6 packe through this interface.
         """
