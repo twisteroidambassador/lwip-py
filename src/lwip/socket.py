@@ -1,5 +1,6 @@
 import errno
 import socket
+import weakref
 from collections.abc import Sequence, Iterable
 from typing import Self, overload
 
@@ -179,6 +180,7 @@ class Socket:
             # The calling code should use check_ret_errno around the code where fd is obtained
             raise ValueError('Invalid FD')
         self._s = fd
+        self._finalizer = weakref.finalize(self, self._lwip.lwip.lwip_close, fd)
     
     @property
     def lwip_instance(self):
@@ -499,6 +501,7 @@ class Socket:
                 check_ret_errno('close', self._lwip.lwip.lwip_close, self._s)
             finally:
                 self._s = -1
+                self._finalizer.detach()
 
     def __enter__(self):
         return self
